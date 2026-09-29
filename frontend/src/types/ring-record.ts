@@ -31,6 +31,12 @@ export interface RingRecord {
   siteId: string;
   /** 调查批次 id */
   sessionId: string;
+  /** 首次相遇记录 id：同一只鸟的关联键，首次记录指向自身，重捕 / 回收指向首次记录 */
+  firstRingId: string;
+  /** 第几次相遇（1 = 首次初捕 / 首条记录） */
+  encounterSeq: number;
+  /** 复核原因：本次相遇鸟种或彩环与首次记录不一致时，确认后填写 */
+  reviewReason?: string;
   /** 备注 */
   remark?: string;
 }

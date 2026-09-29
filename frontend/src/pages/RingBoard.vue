@@ -113,6 +113,7 @@ function selectSite(siteId: string) {
               {{ record.status }}
             </el-tag>
             <span class="recent-ring">{{ record.ringNo }}</span>
+            <el-tag v-if="record.encounterSeq > 1" size="small" type="info" effect="plain">第 {{ record.encounterSeq }} 次相遇</el-tag>
             <span class="recent-species">{{ record.speciesCn }}</span>
             <span class="recent-site">{{ siteNameOf(record.siteId) }}</span>
           </div>

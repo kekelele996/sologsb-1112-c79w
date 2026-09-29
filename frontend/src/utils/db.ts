@@ -3,12 +3,13 @@ import type { RingRecord } from '../types/ring-record';
 import type { Morphometrics } from '../types/morphometrics';
 import type { BirdSite } from '../types/bird-site';
 import type { SurveySession } from '../types/session';
+import { reconcileEncounters } from './encounter';
 
 /** IndexedDB 库名（浏览器本地存储，无后端） */
 export const DB_NAME = 'gbbirdring-db';
 
 /** 当前 schema 版本，与 db.version(n) 对应 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 class BirdRingDB extends Dexie {
   rings!: Table<RingRecord, string>;
@@ -48,6 +49,22 @@ class BirdRingDB extends Dexie {
               row.colorRing = '无';
             }
           });
+      });
+
+    // v3：同一只鸟的多次相遇（初捕 / 重捕 / 回收）通过 firstRingId 关联到首次记录，
+    // 并回填 encounterSeq；之后重捕、回收可续录，环号历史按相遇次序展示。
+    this.version(3)
+      .stores({
+        rings: 'id, ringNo, speciesCn, status, ringDate, siteId, sessionId, firstRingId, [speciesCn+ringDate]',
+        morphs: 'id, ringId, measuredAt',
+        sites: 'id, siteNo, habitat, name',
+        sessions: 'id, sessionNo, date, siteId, closed',
+        meta: 'key',
+      })
+      .upgrade(async (tx) => {
+        const rows = await tx.table<RingRecord, string>('rings').toArray();
+        const { changed } = reconcileEncounters(rows);
+        if (changed.length) await tx.table('rings').bulkPut(changed);
       });
   }
 }

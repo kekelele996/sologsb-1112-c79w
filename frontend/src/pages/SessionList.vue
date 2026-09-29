@@ -8,8 +8,11 @@ import EmptyPanel from '../components/common/EmptyPanel.vue';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSiteStore } from '../stores/siteStore';
 import { useRingStore } from '../stores/ringStore';
+import { STATUS_COLOR, type RingStatus } from '../types/ring-record';
 import { cloudText, type SessionStats, type SurveySession } from '../types/session';
 import { buildSessionStats } from '../utils/stats';
+import { encounterCompare } from '../utils/encounter';
+import { formatDate } from '../utils/format';
 
 const route = useRoute();
 const sessionStore = useSessionStore();
@@ -77,6 +80,14 @@ const averageRecapture = computed(() => {
 const totalSpecies = computed(() => new Set(ringStore.rings.map((record) => record.speciesCn)).size);
 
 const detail = computed(() => statsList.value.find((item) => item.session.id === detailId.value));
+
+/** 该批实际发生的环志记录（统计口径明细，含本批的重捕 / 回收相遇） */
+const detailRecords = computed(() =>
+  ringStore.rings
+    .filter((record) => record.sessionId === detailId.value)
+    .slice()
+    .sort(encounterCompare),
+);
 
 function openCreate() {
   editingId.value = '';
@@ -288,7 +299,7 @@ async function remove(session: SurveySession) {
       </template>
     </el-dialog>
 
-    <el-dialog v-if="detailId" :model-value="true" :title="`批次统计 · ${detail?.session.sessionNo ?? ''}`" width="560px" @close="detailId = null">
+    <el-dialog v-if="detailId" :model-value="true" :title="`批次统计 · ${detail?.session.sessionNo ?? ''}`" width="860px" @close="detailId = null">
       <template v-if="detail">
         <el-descriptions :column="2" border>
           <el-descriptions-item label="鸟点">{{ detail.siteName }}</el-descriptions-item>
@@ -304,6 +315,33 @@ async function remove(session: SurveySession) {
           <el-descriptions-item label="重捕率">{{ detail.recaptureRate }}%</el-descriptions-item>
           <el-descriptions-item label="主调查人">{{ detail.session.leader }}</el-descriptions-item>
         </el-descriptions>
+
+        <div class="detail-head">本批实际发生的记录（{{ detailRecords.length }} 条，统计按这些记录计算）</div>
+        <el-table :data="detailRecords" size="small" border max-height="300">
+          <el-table-column label="相遇" width="70" align="center">
+            <template #default="scope">第 {{ scope.row.encounterSeq }} 次</template>
+          </el-table-column>
+          <el-table-column prop="ringNo" label="环号" width="100" />
+          <el-table-column prop="speciesCn" label="鸟种" width="100" />
+          <el-table-column label="日期" width="100">
+            <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="80">
+            <template #default="scope">
+              <el-tag :type="STATUS_COLOR[scope.row.status as RingStatus]" size="small">{{ scope.row.status }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="netNo" label="网号" width="80" />
+          <el-table-column label="鸟点" min-width="120">
+            <template #default="scope">{{ siteStore.siteName(scope.row.siteId) }}</template>
+          </el-table-column>
+          <el-table-column label="复核 / 备注" min-width="160" show-overflow-tooltip>
+            <template #default="scope">
+              <el-tag v-if="scope.row.reviewReason" type="warning" size="small" class="review-tag">复核：{{ scope.row.reviewReason }}</el-tag>
+              <span>{{ scope.row.remark }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
       </template>
       <template #footer>
         <el-button type="primary" @click="detailId = null">关闭</el-button>
@@ -338,5 +376,14 @@ async function remove(session: SurveySession) {
 }
 .block {
   border-radius: 8px;
+}
+.detail-head {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f4a44;
+}
+.review-tag {
+  margin-right: 6px;
 }
 </style>

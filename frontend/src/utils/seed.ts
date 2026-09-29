@@ -4,6 +4,7 @@ import type { SurveySession } from '../types/session';
 import type { RingRecord } from '../types/ring-record';
 import type { Morphometrics } from '../types/morphometrics';
 import { SPECIES_CATALOG } from './stats';
+import { reconcileEncounters } from './encounter';
 
 const DAY = 86_400_000;
 const isoDaysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -55,6 +56,9 @@ function ring(
     ringer,
     siteId,
     sessionId,
+    // 占位值：SEED_RINGS 落库前统一经 reconcileEncounters 回填首次关联与相遇序号
+    firstRingId: '',
+    encounterSeq: 0,
     remark,
   };
 }
@@ -141,7 +145,7 @@ export async function seedIfEmpty(): Promise<void> {
   await db.transaction('rw', db.rings, db.morphs, db.sites, db.sessions, db.meta, async () => {
     if (siteCount === 0) await db.sites.bulkPut(SEED_SITES);
     if (sessionCount === 0) await db.sessions.bulkPut(SEED_SESSIONS);
-    if (ringCount === 0) await db.rings.bulkPut(SEED_RINGS);
+    if (ringCount === 0) await db.rings.bulkPut(reconcileEncounters(SEED_RINGS).next);
     if (morphCount === 0) await db.morphs.bulkPut(SEED_MORPHS);
     await db.meta.put({ key: 'seeded', value: new Date().toISOString() });
   });

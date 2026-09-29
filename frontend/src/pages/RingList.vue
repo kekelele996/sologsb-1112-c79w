@@ -37,30 +37,30 @@ interface RingForm {
   ringer: string;
   siteId: string;
   sessionId: string;
+  reviewReason: string;
   remark: string;
 }
 
-const form = ref<RingForm>({
-  ringNo: 'A-',
-  colorRing: '无',
-  speciesCn: '',
-  speciesSci: '',
-  age: '成',
-  ringDate: new Date().toISOString().slice(0, 10),
-  netNo: '1 号网',
-  netRound: 1,
-  status: '初捕',
-  ringer: '',
-  siteId: '',
-  sessionId: '',
-  remark: '',
-});
+function emptyForm(): RingForm {
+  return {
+    ringNo: 'A-',
+    colorRing: '无',
+    speciesCn: '红喉歌鸲',
+    speciesSci: 'Calliope calliope',
+    age: '成',
+    ringDate: new Date().toISOString().slice(0, 10),
+    netNo: '1 号网',
+    netRound: 1,
+    status: '初捕',
+    ringer: '韩雪',
+    siteId: siteStore.sites[0]?.id ?? '',
+    sessionId: sessionStore.sessions[0]?.id ?? '',
+    reviewReason: '',
+    remark: '',
+  };
+}
 
-const rules: FormRules = {
-  ringNo: [{ required: true, message: '请输入金属环号', trigger: 'blur' }],
-  speciesCn: [{ required: true, message: '请选择或输入鸟种中文名', trigger: 'change' }],
-  ringer: [{ required: true, message: '请输入环志人', trigger: 'blur' }],
-};
+const form = ref<RingForm>(emptyForm());
 
 const kwParam = computed(() => (typeof route.query.kw === 'string' ? route.query.kw : ''));
 const speciesParam = computed(() => (typeof route.query.species === 'string' ? route.query.species : ''));
@@ -87,28 +87,33 @@ const existedRecord = computed(() => {
   const found = ringStore.findByRingNo(form.value.ringNo);
   return found && found.id !== editingId.value ? found : undefined;
 });
+/** 同环号的首次相遇记录（续录关联对象） */
+const firstRecord = computed(() => (existedRecord.value ? ringStore.firstRecordOf(existedRecord.value) : undefined));
 const existedHistory = computed(() => (existedRecord.value ? ringStore.historyOf(form.value.ringNo) : []));
+
+/** 续录重捕 / 回收时，鸟种或彩环与首次记录不一致 */
+const encounterConflict = computed(() => {
+  if (editingId.value || !existedRecord.value || !firstRecord.value || form.value.status === '初捕') return undefined;
+  const speciesMismatch = form.value.speciesCn.trim() !== firstRecord.value.speciesCn;
+  const colorMismatch = (form.value.colorRing || '无') !== firstRecord.value.colorRing;
+  return speciesMismatch || colorMismatch ? { first: firstRecord.value, speciesMismatch, colorMismatch } : undefined;
+});
+
+const rules = computed<FormRules>(() => ({
+  ringNo: [{ required: true, message: '请输入金属环号', trigger: 'blur' }],
+  speciesCn: [{ required: true, message: '请选择或输入鸟种中文名', trigger: 'change' }],
+  ringer: [{ required: true, message: '请输入环志人', trigger: 'blur' }],
+  reviewReason: encounterConflict.value
+    ? [{ required: true, message: '鸟种或彩环与首次记录不一致，请填写复核原因后再保存', trigger: 'blur' }]
+    : [],
+}));
 
 const entityOptions = computed(() => speciesCount(ringStore.rings).map((item) => item.speciesCn));
 
 function openCreate() {
   editingId.value = '';
   formRef.value?.clearValidate();
-  form.value = {
-    ringNo: 'A-',
-    colorRing: '无',
-    speciesCn: '红喉歌鸲',
-    speciesSci: 'Calliope calliope',
-    age: '成',
-    ringDate: new Date().toISOString().slice(0, 10),
-    netNo: '1 号网',
-    netRound: 1,
-    status: '初捕',
-    ringer: '韩雪',
-    siteId: siteStore.sites[0]?.id ?? '',
-    sessionId: sessionStore.sessions[0]?.id ?? '',
-    remark: '',
-  };
+  form.value = emptyForm();
   dialogVisible.value = true;
 }
 
@@ -127,7 +132,32 @@ function openEdit(record: RingRecord) {
     ringer: record.ringer,
     siteId: record.siteId,
     sessionId: record.sessionId,
+    reviewReason: record.reviewReason ?? '',
     remark: record.remark ?? '',
+  };
+  dialogVisible.value = true;
+}
+
+/** 从历史记录续录一次相遇（重捕 / 回收），沿用首次档案信息便于核对 */
+function openEncounter(status: RingStatus) {
+  const ringNo = historyRingNo.value;
+  const first = ringStore.historyOf(ringNo)[0];
+  historyVisible.value = false;
+  editingId.value = '';
+  formRef.value?.clearValidate();
+  form.value = {
+    ...emptyForm(),
+    ringNo,
+    colorRing: first?.colorRing ?? '无',
+    speciesCn: first?.speciesCn ?? '红喉歌鸲',
+    speciesSci: first?.speciesSci ?? 'Calliope calliope',
+    age: first?.age ?? '成',
+    netNo: first?.netNo ?? '1 号网',
+    netRound: first ? first.netRound + 1 : 1,
+    status,
+    ringer: first?.ringer ?? '韩雪',
+    reviewReason: '',
+    remark: '',
   };
   dialogVisible.value = true;
 }
@@ -135,13 +165,6 @@ function openEdit(record: RingRecord) {
 async function submit() {
   const ok = await formRef.value?.validate().catch(() => false);
   if (!ok) return;
-  if (!editingId.value && existedRecord.value) {
-    ringStore.setDuplicate(existedRecord.value.id);
-    ElMessage.error(`环号 ${form.value.ringNo} 已存在，已跳转该环号历史记录`);
-    historyRingNo.value = form.value.ringNo;
-    historyVisible.value = true;
-    return;
-  }
   const payload = {
     ringNo: form.value.ringNo,
     colorRing: form.value.colorRing,
@@ -155,15 +178,35 @@ async function submit() {
     ringer: form.value.ringer,
     siteId: form.value.siteId,
     sessionId: form.value.sessionId,
+    reviewReason: form.value.reviewReason,
     remark: form.value.remark,
   };
   if (editingId.value) {
     await ringStore.updateRing(editingId.value, payload);
     ElMessage.success(`已更新环志记录 ${payload.ringNo}`);
-  } else {
-    await ringStore.addRing(payload);
-    ElMessage.success(`已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`);
+    dialogVisible.value = false;
+    return;
   }
+
+  const result = await ringStore.addRing(payload);
+  if (result.duplicate) {
+    ElMessage.error(`环号 ${form.value.ringNo} 已有初捕档案，请改为「重捕」或「回收」续录`);
+    historyRingNo.value = form.value.ringNo;
+    historyVisible.value = true;
+    return;
+  }
+  if (result.conflict) {
+    const parts: string[] = [];
+    if (result.conflict.speciesMismatch) parts.push(`鸟种（首次「${result.conflict.first.speciesCn}」→ 本次「${form.value.speciesCn}」）`);
+    if (result.conflict.colorMismatch) parts.push(`彩环（首次「${result.conflict.first.colorRing}」→ 本次「${form.value.colorRing}」）`);
+    ElMessage.warning(`本次相遇与首次记录的${parts.join('、')}不一致，请填写复核原因后再次保存`);
+    return;
+  }
+  ElMessage.success(
+    result.record && result.record.encounterSeq > 1
+      ? `已登记 ${payload.ringNo} 第 ${result.record.encounterSeq} 次相遇（${payload.status}），已关联首次记录`
+      : `已登记环志记录 ${payload.ringNo}（${payload.speciesCn}）`,
+  );
   dialogVisible.value = false;
 }
 
@@ -173,7 +216,13 @@ function showHistory(ringNo: string) {
 }
 
 async function remove(record: RingRecord) {
-  const confirmed = await ElMessageBox.confirm(`确认删除环志记录 ${record.ringNo}（${record.speciesCn}）？`, '删除确认', { type: 'warning' })
+  const confirmed = await ElMessageBox.confirm(
+    record.firstRingId === record.id && ringStore.historyOf(record.ringNo).length > 1
+      ? `确认删除首次记录 ${record.ringNo}（${record.speciesCn}）？删除后该环号最早一条相遇将自动成为新的首次记录。`
+      : `确认删除环志记录 ${record.ringNo}（${record.speciesCn}）？`,
+    '删除确认',
+    { type: 'warning' },
+  )
     .then(() => true)
     .catch(() => false);
   if (!confirmed) return;
@@ -182,12 +231,17 @@ async function remove(record: RingRecord) {
 }
 
 const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
+const sessionNoOf = (sessionId: string) => sessionStore.byId(sessionId)?.sessionNo ?? '—';
+const sessionDateOf = (sessionId: string) => sessionStore.byId(sessionId)?.date ?? '';
 </script>
 
 <template>
   <div>
     <h2 class="page-title">环志记录录入与检索</h2>
-    <p class="page-desc">金属环号 + 彩环组合双段录入，自动查重；环号重复时提示已存在并跳转该环号历史记录。</p>
+    <p class="page-desc">
+      金属环号 + 彩环组合双段录入。首次相遇保存为初捕；隔天或换鸟点再次捕到同一只鸟时，选择「重捕」或「回收」即可续录并自动关联首次记录。
+      鸟种或彩环与首次不一致时需填写复核原因确认后保存，原记录与每次相遇历史均完整保留。
+    </p>
 
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">登记环志记录</el-button>
@@ -212,6 +266,13 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
     <el-card v-else shadow="never" class="block">
       <el-table :data="visible" size="small" border>
         <el-table-column prop="ringNo" label="金属环号" width="110" />
+        <el-table-column label="相遇" width="90">
+          <template #default="scope">
+            <el-button link type="primary" @click="showHistory(scope.row.ringNo)">
+              第 {{ scope.row.encounterSeq ?? 1 }} 次<el-icon v-if="scope.row.reviewReason" class="review-dot" title="本次相遇已复核">⚠</el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
         <el-table-column prop="colorRing" label="彩环" width="100" />
         <el-table-column prop="speciesCn" label="鸟种" width="110" />
         <el-table-column prop="speciesSci" label="学名" min-width="170" show-overflow-tooltip />
@@ -245,7 +306,11 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
         v-model:ring-no="form.ringNo"
         v-model:color-ring="form.colorRing"
         :existed="existedRecord"
+        :first="firstRecord"
         :history-count="existedHistory.length"
+        :encounter-status="form.status"
+        :species-cn="form.speciesCn"
+        :editing="Boolean(editingId)"
         @view-history="showHistory"
       />
 
@@ -286,7 +351,7 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
           <el-input v-model="form.ringer" style="width: 160px" maxlength="16" placeholder="如：韩雪" />
         </el-form-item>
         <el-form-item label="鸟点">
-          <el-select v-model="form.siteId" style="width: 240px" :options="[]">
+          <el-select v-model="form.siteId" style="width: 240px">
             <el-option v-for="site in siteStore.sites" :key="site.id" :label="`${site.siteNo} · ${site.name}`" :value="site.id" />
           </el-select>
         </el-form-item>
@@ -294,6 +359,15 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
           <el-select v-model="form.sessionId" style="width: 240px">
             <el-option v-for="session in sessionStore.sessions" :key="session.id" :label="`${session.sessionNo} · ${session.date}`" :value="session.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="encounterConflict || form.reviewReason" label="复核原因" prop="reviewReason">
+          <el-input
+            v-model="form.reviewReason"
+            type="textarea"
+            :rows="2"
+            maxlength="80"
+            :placeholder="encounterConflict ? '鸟种或彩环与首次记录不一致，请填写复核原因（如换环、原鉴定有误、环号磨损误读等），确认后保存' : '此前填写的复核原因'"
+          />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" maxlength="80" placeholder="重捕位移、体况等" />
@@ -306,19 +380,43 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
       </template>
     </el-dialog>
 
-    <el-dialog v-model="historyVisible" :title="`环号历史记录 · ${historyRingNo}`" width="720px">
-      <el-table :data="historyRows" size="small" border>
-        <el-table-column prop="ringNo" label="环号" width="110" />
-        <el-table-column prop="speciesCn" label="鸟种" width="110" />
-        <el-table-column label="环志日期" width="120">
+    <el-dialog v-model="historyVisible" :title="`环号相遇历史 · ${historyRingNo}`" width="900px">
+      <el-table :data="historyRows" size="small" border max-height="420">
+        <el-table-column label="相遇" width="70" align="center">
+          <template #default="scope">
+            <el-tag size="small" :type="scope.row.encounterSeq === 1 ? 'success' : 'info'">第 {{ scope.row.encounterSeq }} 次</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="环志日期" width="100">
           <template #default="scope">{{ formatDate(scope.row.ringDate) }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="90" />
-        <el-table-column prop="netNo" label="网号" width="100" />
-        <el-table-column prop="ringer" label="环志人" width="90" />
-        <el-table-column prop="remark" label="备注" show-overflow-tooltip />
+        <el-table-column label="状态" width="80">
+          <template #default="scope">
+            <el-tag :type="STATUS_COLOR[scope.row.status as RingStatus]" size="small">{{ scope.row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="colorRing" label="彩环" width="90" />
+        <el-table-column prop="speciesCn" label="鸟种" width="100" />
+        <el-table-column label="所在批次" width="130">
+          <template #default="scope">
+            {{ sessionNoOf(scope.row.sessionId) }}<span v-if="sessionDateOf(scope.row.sessionId)" class="hist-date"> · {{ sessionDateOf(scope.row.sessionId) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="鸟点" width="120">
+          <template #default="scope">{{ siteStore.siteName(scope.row.siteId) }}</template>
+        </el-table-column>
+        <el-table-column prop="netNo" label="网号" width="80" />
+        <el-table-column prop="ringer" label="环志人" width="80" />
+        <el-table-column label="复核 / 备注" min-width="180" show-overflow-tooltip>
+          <template #default="scope">
+            <el-tag v-if="scope.row.reviewReason" type="warning" size="small" class="review-tag">复核：{{ scope.row.reviewReason }}</el-tag>
+            <span>{{ scope.row.remark }}</span>
+          </template>
+        </el-table-column>
       </el-table>
       <template #footer>
+        <el-button type="warning" :disabled="!historyRingNo" @click="openEncounter('重捕')">续录重捕</el-button>
+        <el-button type="danger" :disabled="!historyRingNo" @click="openEncounter('回收')">续录回收</el-button>
         <el-button type="primary" @click="historyVisible = false">关闭</el-button>
       </template>
     </el-dialog>
@@ -348,5 +446,16 @@ const historyRows = computed(() => ringStore.historyOf(historyRingNo.value));
 }
 .ring-form {
   margin-top: 10px;
+}
+.review-dot {
+  margin-left: 2px;
+  font-size: 12px;
+}
+.review-tag {
+  margin-right: 6px;
+}
+.hist-date {
+  color: #8a99a5;
+  font-size: 12px;
 }
 </style>
