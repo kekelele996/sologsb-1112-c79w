@@ -40,6 +40,7 @@ function ring(
   ringer: string,
   days: number,
   remark?: string,
+  initialRingId?: string,
 ): RingRecord {
   return {
     id: `ring-${String(index).padStart(3, '0')}`,
@@ -55,6 +56,7 @@ function ring(
     ringer,
     siteId,
     sessionId,
+    initialRingId,
     remark,
   };
 }
@@ -73,7 +75,7 @@ export const SEED_RINGS: RingRecord[] = [
   ring(11, 'B-20513', '无', '黄眉柳莺', '幼', 'session-003', 'site-003', '6 号网', 2, '初捕', '郑海', 7),
   ring(12, 'B-20514', '无', '沼泽山雀', '成', 'session-003', 'site-003', '9 号网', 3, '初捕', '韩雪', 7),
   ring(13, 'B-20515', '无', '灰喜鹊', '成', 'session-003', 'site-003', '10 号网', 4, '初捕', '韩雪', 7),
-  ring(14, 'A-10231', '红-黄', '红喉歌鸲', '成', 'session-003', 'site-003', '6 号网', 5, '重捕', '郑海', 7, 'A-10231 跨点重捕，位移约 30km'),
+  ring(14, 'A-10231', '红-黄', '红喉歌鸲', '成', 'session-003', 'site-003', '6 号网', 5, '重捕', '郑海', 7, 'A-10231 跨点重捕，位移约 30km', 'ring-001'),
   ring(15, 'C-30101', '无', '白眉鹀', '亚成', 'session-004', 'site-001', '4 号网', 1, '初捕', '郑海', 2),
   ring(16, 'C-30102', '无', '北红尾鸲', '成', 'session-004', 'site-001', '5 号网', 2, '初捕', '郑海', 2),
   ring(17, 'A-10099', '无', '红喉歌鸲', '成', 'session-004', 'site-001', '3 号网', 3, '回收', '郑海', 2, '回收自外站环志个体'),

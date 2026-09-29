@@ -8,7 +8,7 @@ import type { SurveySession } from '../types/session';
 export const DB_NAME = 'gbbirdring-db';
 
 /** 当前 schema 版本，与 db.version(n) 对应 */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 class BirdRingDB extends Dexie {
   rings!: Table<RingRecord, string>;
@@ -48,6 +48,39 @@ class BirdRingDB extends Dexie {
               row.colorRing = '无';
             }
           });
+      });
+
+    // v3：支持后续相遇（重捕 / 回收）续录并关联首次记录。
+    // 按环号分组、按相遇时间排序，最早一条即该鸟的首次档案，后续记录回填 initialRingId。
+    this.version(3)
+      .stores({
+        rings: 'id, ringNo, speciesCn, status, ringDate, siteId, sessionId, initialRingId, [speciesCn+ringDate]',
+        morphs: 'id, ringId, measuredAt',
+        sites: 'id, siteNo, habitat, name',
+        sessions: 'id, sessionNo, date, siteId, closed',
+        meta: 'key',
+      })
+      .upgrade(async (tx) => {
+        const rows = (await tx.table('rings').toArray()) as RingRecord[];
+        const groups = new Map<string, RingRecord[]>();
+        rows.forEach((row) => {
+          const key = row.ringNo.trim().toLowerCase();
+          const list = groups.get(key) ?? [];
+          list.push(row);
+          groups.set(key, list);
+        });
+        const updates: RingRecord[] = [];
+        groups.forEach((list) => {
+          const ordered = [...list].sort((a, b) => a.ringDate.localeCompare(b.ringDate) || a.id.localeCompare(b.id));
+          const firstId = ordered[0].id;
+          ordered.forEach((row) => {
+            if (row.id !== firstId && !row.initialRingId) {
+              row.initialRingId = firstId;
+              updates.push(row);
+            }
+          });
+        });
+        if (updates.length) await tx.table('rings').bulkPut(updates);
       });
   }
 }
